@@ -75,9 +75,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: [release, devel, trunk]
-        arch: [x86_64, aarch64, armv7]
-        os: [ubuntu-22.04, macos-13]
+        ###version: [release, devel, trunk]
+        version: [release]
+        ###arch: [x86_64, aarch64, armv7]
+        arch: [aarch64]
+        ###os: [ubuntu-22.04, macos-13]
+        os: [ubuntu-22.04]
         exclude:
           - os: macos-13
             version: trunk
@@ -99,6 +102,8 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
       - name: Get cached SDK
         id: cache-sdk
+        ###
+        if: false
         uses: actions/cache/restore@v4
         with:
           path: ~/swift-${{ matrix.version }}-android-${{ matrix.arch }}-*-sdk.tar.xz
@@ -176,7 +181,31 @@ jobs:
           perl -pi -e "s%/data/data/com.termux/files%$SDK%g" $SDK/usr/lib/pkgconfig/sqlite3.pc
           perl -pi -e 's%String\(cString: getpass%\"fake\" //%' swiftpm/Sources/PackageRegistryCommand/PackageRegistryCommand+Auth.swift
 
-          ./swift/utils/build-script -RA --skip-build-cmark --build-llvm=0 --android --android-ndk $ANDROID_NDK_LATEST_HOME --android-arch ${{ matrix.arch }} --android-api-level $ANDROID_API_LEVEL --build-swift-tools=0 --native-swift-tools-path=${TOOLCHAIN}/bin --native-clang-tools-path=${TOOLCHAIN}/bin --cross-compile-hosts=android-${{ matrix.arch }} --cross-compile-deps-path=$SDK --skip-local-build --build-swift-static-stdlib --xctest --skip-early-swift-driver --install-swift --install-libdispatch --install-foundation --install-xctest --install-destdir=$SDK --swift-install-components='clang-resource-dir-symlink;license;stdlib;sdk-overlay' --cross-compile-append-host-target-to-destdir=False -b -p --install-llbuild --sourcekit-lsp --skip-early-swiftsyntax
+          # swift-testing depends on swift-testing-macros, but it shouldn't
+          perl -pi -e "s%swift_testing_macros.SwiftTestingMacros%swift.Swift%g" swift/utils/swift_build_support/swift_build_support/products/swift_testing.py
+          perl -pi -e "s%# Manually iterate the cross compile hosts.%print(f'### swift_testing.py self.args.cross_compile_hosts: {self.args.cross_compile_hosts}', flush=True)%g" swift/utils/swift_build_support/swift_build_support/products/swift_testing.py
+          perl -pi -e "s%if self.has_cross_compile_hosts\(\) and self.is_darwin_host\(base_target\)%if self.has_cross_compile_hosts\(\)%g" swift/utils/swift_build_support/swift_build_support/products/swift_testing.py
+          perl -pi -e "s%if self.has_cross_compile_hosts\(\) and self.is_darwin_host\(host_target\)%if self.has_cross_compile_hosts\(\)%g" swift/utils/swift_build_support/swift_build_support/products/swift_testing.py
+          # fixup def should_install
+          perl -pi -e "s%return self.args.install_swift_testing_macros%return self.args.install_swift_testing%g" swift/utils/swift_build_support/swift_build_support/products/swift_testing.py
+
+          cat swift/utils/swift_build_support/swift_build_support/products/swift_testing.py
+
+          # make sure swift-syntax is where we expect
+          ls $PWD/swift-syntax
+
+          ./swift/utils/build-script -RA --skip-build-cmark --build-llvm=0 --android --android-ndk $ANDROID_NDK_LATEST_HOME --android-arch ${{ matrix.arch }} --android-api-level $ANDROID_API_LEVEL --build-swift-tools=0 --native-swift-tools-path=${TOOLCHAIN}/bin --native-clang-tools-path=${TOOLCHAIN}/bin --cross-compile-hosts=android-${{ matrix.arch }} --cross-compile-deps-path=$SDK --skip-local-build --build-swift-static-stdlib --xctest --skip-early-swift-driver --install-swift --install-libdispatch --install-foundation --install-xctest --install-destdir=$SDK --swift-install-components='clang-resource-dir-symlink;license;stdlib;sdk-overlay' --cross-compile-append-host-target-to-destdir=False -b -p --install-llbuild --sourcekit-lsp --skip-early-swiftsyntax --swift-testing --install-swift-testing --install-swift-testing-macros
+          #--swiftsyntax --install-swiftsyntax 
+          #--swift-testing-macros --install-swift-testing-macros 
+          #--extra-cmake-options="-DSwiftSyntax_DIR=$PWD/swift-syntax"
+
+          # visualize output
+          tree $SDK/usr/lib
+
+          file $SDK/usr/lib/swift/*/libTesting.so
+
+          # make sure we have built the Testing.swiftmodule
+          tree $SDK/usr/lib | grep Testing.swiftmodule
 
           cp $ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$(echo ${{ matrix.arch }} | sed "s/v7//")-linux-android*/libc++_shared.so $SDK/usr/lib
           patchelf --set-rpath \$ORIGIN $SDK/usr/lib/swift/android/libdispatch.so
@@ -184,8 +213,21 @@ jobs:
 
           tar cJf ~/$SDK_NAME.tar.xz $SDK_NAME
           rm -rf build/ $SDK_NAME llvm-project/
+
+      - name: Upload Artifacte
+        if: true
+        uses: actions/upload-artifact@v4
+        with:
+          path: ~/swift-${{ matrix.version }}-android-${{ matrix.arch }}-*-sdk.tar.xz
+          compression-level: 0
+
+      # no need to perform subsequent builds
+      - name: Exit early
+        run: exit 999
+
       - name: Cache new SDK on linux
-        if: ${{ (steps.cache-sdk.outputs.cache-hit != 'true') && startsWith(matrix.os, 'ubuntu') }}
+        if: false
+        ###if: ${{ (steps.cache-sdk.outputs.cache-hit != 'true') && startsWith(matrix.os, 'ubuntu') }}
         uses: actions/cache/save@v4
         with:
           path: ~/swift-${{ matrix.version }}-android-${{ matrix.arch }}-*-sdk.tar.xz
